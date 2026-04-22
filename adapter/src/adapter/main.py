@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -25,8 +26,8 @@ from .config import Settings, get_settings
 from .envelope import ChatRequest, ChatResponse
 from .files import (
     FileFetchError,
-    FileTooLarge,
-    RequestTooLarge,
+    FileTooLargeError,
+    RequestTooLargeError,
     materialize_files,
 )
 from .hermes_runner import ProgressEvent, RunResult, run_chat, stream_chat
@@ -102,7 +103,10 @@ async def _parse_envelope(request: Request, settings: Settings) -> ChatRequest:
 
 # ── Non-streaming chat ───────────────────────────────────────────────
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: Request, settings: Settings = Depends(get_settings)) -> JSONResponse:
+async def chat(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> JSONResponse:
     req = await _parse_envelope(request, settings)
 
     logger.info(
@@ -117,10 +121,10 @@ async def chat(request: Request, settings: Settings = Depends(get_settings)) -> 
     try:
         with materialize_files(req.files, settings) as mats:
             result = await run_chat(req, settings, mats)
-    except FileTooLarge as e:
+    except FileTooLargeError as e:
         logger.info("file too large: %s", e)
         raise HTTPException(status_code=413, detail="file_too_large") from e
-    except RequestTooLarge as e:
+    except RequestTooLargeError as e:
         logger.info("request too large: %s", e)
         raise HTTPException(status_code=413, detail="request_too_large") from e
     except FileFetchError as e:
@@ -145,7 +149,8 @@ async def chat(request: Request, settings: Settings = Depends(get_settings)) -> 
 # ── Streaming chat ───────────────────────────────────────────────────
 @app.post("/chat/stream")
 async def chat_stream(
-    request: Request, settings: Settings = Depends(get_settings)
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> EventSourceResponse:
     req = await _parse_envelope(request, settings)
 
@@ -204,11 +209,11 @@ async def chat_stream(
                     )
 
                 yield ev.done(usage=(final_result.usage if final_result else None))
-        except FileTooLarge as e:
+        except FileTooLargeError as e:
             logger.info("file too large: %s", e)
             yield ev.error("Arquivo acima do limite de 50 MB.", code="file_too_large")
             yield ev.done()
-        except RequestTooLarge as e:
+        except RequestTooLargeError as e:
             logger.info("request too large: %s", e)
             yield ev.error(
                 "Conjunto de arquivos acima do limite de 200 MB por requisição.",

@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any
 
 from .config import Settings
 from .envelope import ChatRequest
@@ -119,14 +121,10 @@ def _run_chat_sync(
 
     agent = AIAgent()
 
-    try:
+    with suppress(Exception):
         agent.conversation_history = _history_to_hermes(req.history)  # type: ignore[attr-defined]
-    except Exception:
-        pass
-    try:
+    with suppress(Exception):
         agent.ephemeral_system_prompt = _build_system_prompt(req, files)  # type: ignore[attr-defined]
-    except Exception:
-        pass
 
     user_text = req.user_message or ""
     reply: Any
@@ -215,28 +213,20 @@ def _run_chat_streaming_sync(
         emit("tool_progress", data)
 
     agent = AIAgent()
-    try:
+    with suppress(Exception):
         agent.conversation_history = _history_to_hermes(req.history)  # type: ignore[attr-defined]
-    except Exception:
-        pass
-    try:
+    with suppress(Exception):
         agent.ephemeral_system_prompt = _build_system_prompt(req, files)  # type: ignore[attr-defined]
-    except Exception:
-        pass
 
     # Best-effort wiring of progress hooks — different AIAgent versions expose
     # slightly different names. We try a few and silently move on if none match;
     # in that case the client still gets the opening/closing step events we emit.
     for attr in ("step_callback", "on_step", "progress_callback"):
-        try:
+        with suppress(Exception):
             setattr(agent, attr, step_cb)
-        except Exception:
-            pass
     for attr in ("tool_progress_callback", "on_tool_progress"):
-        try:
+        with suppress(Exception):
             setattr(agent, attr, tool_progress_cb)
-        except Exception:
-            pass
 
     user_text = req.user_message or ""
     emit("step", {"description": "Consultando o modelo Hermes."})
@@ -305,7 +295,7 @@ async def stream_chat(
         try:
             ev = await asyncio.wait_for(queue.get(), timeout=0.25)
             yield ev
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
     # Surface any exception the sync body raised.

@@ -15,8 +15,8 @@ import pytest
 from adapter.config import Settings
 from adapter.envelope import FileRef
 from adapter.files import (
-    FileTooLarge,
-    RequestTooLarge,
+    FileTooLargeError,
+    RequestTooLargeError,
     materialize_files,
 )
 
@@ -33,7 +33,8 @@ def _settings(tmp_path, *, max_file: int = 50, max_request: int = 100) -> Settin
 
 
 def test_per_file_cap_trips_before_download(tmp_path) -> None:
-    s = _settings(tmp_path, max_file=10)
+    # Aggregate cap must allow the declared total so the per-file check runs first.
+    s = _settings(tmp_path, max_file=10, max_request=10_000)
     files = [
         FileRef(
             attachment_id="1",
@@ -43,9 +44,8 @@ def test_per_file_cap_trips_before_download(tmp_path) -> None:
             size_bytes=1_000,
         )
     ]
-    with pytest.raises(FileTooLarge):
-        with materialize_files(files, s):
-            pytest.fail("should not have entered body")
+    with pytest.raises(FileTooLargeError), materialize_files(files, s):
+        pytest.fail("should not have entered body")
 
 
 def test_aggregate_cap_trips_before_download(tmp_path) -> None:
@@ -60,9 +60,8 @@ def test_aggregate_cap_trips_before_download(tmp_path) -> None:
         )
         for i in range(3)
     ]
-    with pytest.raises(RequestTooLarge):
-        with materialize_files(files, s):
-            pytest.fail("should not have entered body")
+    with pytest.raises(RequestTooLargeError), materialize_files(files, s):
+        pytest.fail("should not have entered body")
 
 
 def test_empty_list_yields_empty(tmp_path) -> None:

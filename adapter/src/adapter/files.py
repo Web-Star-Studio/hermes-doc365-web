@@ -7,7 +7,7 @@ and delete the directory in `finally`.
 
 Size policy (locked in plan):
     50 MB / file, 200 MB / request total
-Oversize → raise `FileTooLarge` / `RequestTooLarge` with a pt-BR message the
+Oversize → raise `FileTooLargeError` / `RequestTooLargeError` with a pt-BR message the
 `/chat` handler relays to the client as 413.
 """
 
@@ -18,9 +18,9 @@ import os
 import re
 import shutil
 import tempfile
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterator
 
 import boto3
 from botocore.client import Config as BotoConfig
@@ -31,11 +31,11 @@ from .envelope import FileRef
 logger = logging.getLogger(__name__)
 
 
-class FileTooLarge(Exception):
+class FileTooLargeError(Exception):
     """A single attachment exceeds the per-file cap."""
 
 
-class RequestTooLarge(Exception):
+class RequestTooLargeError(Exception):
     """The sum of attachments in one request exceeds the aggregate cap."""
 
 
@@ -119,12 +119,12 @@ def materialize_files(
 
     total_claimed = sum(f.size_bytes for f in files)
     if total_claimed > settings.max_request_bytes:
-        raise RequestTooLarge(
+        raise RequestTooLargeError(
             f"total={total_claimed} exceeds cap={settings.max_request_bytes}"
         )
     for f in files:
         if f.size_bytes > settings.max_file_bytes:
-            raise FileTooLarge(
+            raise FileTooLargeError(
                 f"{f.original_name!r} size={f.size_bytes} exceeds cap="
                 f"{settings.max_file_bytes}"
             )
@@ -148,12 +148,12 @@ def materialize_files(
             real_size = os.path.getsize(local_path)
             running_total += real_size
             if real_size > settings.max_file_bytes:
-                raise FileTooLarge(
+                raise FileTooLargeError(
                     f"{ref.original_name!r} real-size={real_size} exceeds cap="
                     f"{settings.max_file_bytes}"
                 )
             if running_total > settings.max_request_bytes:
-                raise RequestTooLarge(
+                raise RequestTooLargeError(
                     f"running-total={running_total} exceeds cap="
                     f"{settings.max_request_bytes}"
                 )
