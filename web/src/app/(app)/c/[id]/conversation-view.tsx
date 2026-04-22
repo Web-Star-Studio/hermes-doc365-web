@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { FileText, Send, Loader2, Paperclip } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,7 @@ export interface UIFile {
 }
 
 interface Props {
-  conversation: { id: string; title: string };
+  conversation: { id: string; title: string | null };
   initialMessages: UIMessage[];
   initialFiles: UIFile[];
   orizonSubmitEnabled: boolean;
@@ -39,6 +40,7 @@ export function ConversationView({
   initialFiles,
   orizonSubmitEnabled,
 }: Props) {
+  const router = useRouter();
   const [messages, setMessages] = useState<UIMessage[]>(initialMessages);
   const [files, setFiles] = useState<UIFile[]>(initialFiles);
   const [input, setInput] = useState("");
@@ -51,6 +53,20 @@ export function ConversationView({
     idempotencyKey: string;
   } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [savedTitle, setSavedTitle] = useState<string | null>(conversation.title);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [draftTitle, setDraftTitle] = useState("");
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const titleEditActiveRef = useRef(false);
+  const draftTitleRef = useRef("");
+
+  useEffect(() => {
+    setSavedTitle(conversation.title);
+  }, [conversation.id, conversation.title]);
+
+  useEffect(() => {
+    draftTitleRef.current = draftTitle;
+  }, [draftTitle]);
 
   const scrollToBottom = useCallback(() => {
     queueMicrotask(() => {
@@ -255,6 +271,51 @@ export function ConversationView({
     });
   }
 
+  const displayTitle = savedTitle?.trim()
+    ? savedTitle
+    : t.conversations.untitled;
+
+  const beginTitleEdit = useCallback(() => {
+    titleEditActiveRef.current = true;
+    setDraftTitle(savedTitle ?? "");
+    setEditingTitle(true);
+    queueMicrotask(() => {
+      const el = titleInputRef.current;
+      el?.focus();
+      el?.select();
+    });
+  }, [savedTitle]);
+
+  const cancelTitleEdit = useCallback(() => {
+    if (!titleEditActiveRef.current) return;
+    titleEditActiveRef.current = false;
+    setEditingTitle(false);
+  }, []);
+
+  const commitTitleEdit = useCallback(async () => {
+    if (!titleEditActiveRef.current) return;
+    titleEditActiveRef.current = false;
+    setEditingTitle(false);
+
+    const trimmed = draftTitleRef.current.trim();
+    const next: string | null = trimmed.length > 0 ? trimmed : null;
+    const prev = savedTitle?.trim() || null;
+    if (next === prev) return;
+
+    try {
+      const res = await fetch(`/api/conversations/${conversation.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: trimmed }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setSavedTitle(next);
+      router.refresh();
+    } catch {
+      setError(t.errors.generic);
+    }
+  }, [conversation.id, router, savedTitle]);
+
   async function confirmApproval() {
     if (!pendingApproval) return;
     const { action, actionRequestId, idempotencyKey } = pendingApproval;
@@ -288,7 +349,41 @@ export function ConversationView({
       {/* CENTER ── messages + composer */}
       <div className="flex flex-col min-h-0">
         <header className="border-b px-6 py-3">
-          <h1 className="font-medium truncate">{conversation.title}</h1>
+          <h1 className="font-medium m-0 min-w-0 text-base leading-normal">
+            {editingTitle ? (
+              <input
+                ref={titleInputRef}
+                type="text"
+                maxLength={200}
+                value={draftTitle}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                onBlur={() => {
+                  void commitTitleEdit();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void commitTitleEdit();
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    cancelTitleEdit();
+                  }
+                }}
+                className="font-medium w-full min-w-0 rounded-md border bg-background px-2 py-1 text-base leading-normal outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                aria-label={t.conversations.editTitleHint}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={beginTitleEdit}
+                title={t.conversations.editTitleHint}
+                className="truncate text-left w-full min-w-0 cursor-text rounded-md px-2 py-1 -mx-2 -my-1 hover:bg-muted/50 transition-colors"
+              >
+                {displayTitle}
+              </button>
+            )}
+          </h1>
         </header>
 
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">

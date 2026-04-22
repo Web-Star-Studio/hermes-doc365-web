@@ -100,6 +100,26 @@ export async function touchConversation(id: string) {
     .where(eq(conversations.id, id));
 }
 
+export async function updateConversationTitle(
+  id: string,
+  userId: string,
+  orgId: string,
+  title: string | null,
+): Promise<boolean> {
+  const rows = await db
+    .update(conversations)
+    .set({ title, updatedAt: new Date() })
+    .where(
+      and(
+        eq(conversations.id, id),
+        eq(conversations.organizationId, orgId),
+        eq(conversations.userId, userId),
+      ),
+    )
+    .returning({ id: conversations.id });
+  return rows.length > 0;
+}
+
 export async function appendMessage(
   conversationId: string,
   senderType: "user" | "assistant" | "system",

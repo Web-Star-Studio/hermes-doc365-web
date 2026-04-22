@@ -11,8 +11,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
-    "seed:user": "tsx ../scripts/seed-user.ts",
-    "smoke": "tsx ../scripts/smoke.ts"
+    "seed:user": "NODE_PATH=node_modules tsx ../scripts/seed-user.ts",
+    "smoke": "NODE_PATH=node_modules tsx ../scripts/smoke.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.645.0",
@@ -27,7 +27,7 @@
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.36.0",
     "lucide-react": "^0.454.0",
-    "next": "15.0.3",
+    "next": "15.0.4",
     "next-auth": "5.0.0-beta.25",
     "pg": "^8.13.1",
     "react": "19.0.0-rc-66855b96-20241106",
@@ -43,9 +43,10 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/uuid": "^10.0.0",
+    "autoprefixer": "^10.5.0",
     "drizzle-kit": "^0.28.0",
     "eslint": "^9.14.0",
-    "eslint-config-next": "15.0.3",
+    "eslint-config-next": "15.0.4",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.14",
     "tsx": "^4.19.2",

@@ -1,22 +1,26 @@
 # Multi-stage build for the Next.js app.
 # Output is `standalone` so the final image is small.
+#
+# Uses pnpm to match the committed lockfile (web/pnpm-lock.yaml) and the
+# project convention (CLAUDE.md). npm's strict peer-dep resolution rejects
+# drizzle-orm's optional React Native peers against the React 19 RC pin.
 
 # ── deps ─────────────────────────────────────────────────────────────
 FROM node:20-alpine AS deps
 WORKDIR /app
-RUN apk add --no-cache libc6-compat
-COPY package.json ./
-# Use a lockfile-agnostic install in development. Swap to `npm ci` in prod
-# once a committed lockfile exists.
-RUN npm install --no-audit --no-fund
+RUN apk add --no-cache libc6-compat \
+ && npm install -g pnpm@10
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # ── builder ──────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
 WORKDIR /app
+RUN npm install -g pnpm@10
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+RUN pnpm run build
 
 # ── runner ───────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner

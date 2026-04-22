@@ -22,7 +22,9 @@ WORKDIR /app
 RUN pip install --no-cache-dir "uv>=0.5.0"
 
 # Copy metadata first so the layer cache survives source edits.
-COPY pyproject.toml ./
+# README.md is referenced by pyproject.toml's `readme = "README.md"` and is
+# required by hatchling during metadata validation, so it must be present.
+COPY pyproject.toml README.md ./
 COPY src ./src
 
 # Install project + deps into system python (no venv in container).

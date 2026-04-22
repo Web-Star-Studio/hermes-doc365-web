@@ -10,12 +10,11 @@ export const t = {
   app: {
     name: "Doc365 Hermes",
     tagline: "Assistente de faturamento médico",
-    footer: "Doc365 Hermes — Assistente operacional de faturamento",
   },
 
   auth: {
     loginTitle: "Entrar no Doc365",
-    loginSubtitle: "Acesse seu espaço de trabalho para começar",
+    loginHeading: "Entrar",
     email: "E-mail",
     emailPlaceholder: "seu.email@clinica.com",
     password: "Senha",
@@ -41,6 +40,7 @@ export const t = {
       "Crie uma nova conversa para começar a enviar arquivos e conversar com o Hermes.",
     createButton: "Iniciar nova conversa",
     untitled: "Conversa sem título",
+    editTitleHint: "Clique para editar o título",
     updatedAt: "Atualizada",
     youSaid: "Você",
     hermesSaid: "Hermes",

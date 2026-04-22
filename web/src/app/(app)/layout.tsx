@@ -29,11 +29,6 @@ export default async function AppLayout({
     <div className="min-h-screen bg-background text-foreground grid grid-cols-[260px_1fr]">
       {/* LEFT SIDEBAR ── conversations */}
       <aside className="border-r bg-muted/20 flex flex-col min-h-0">
-        <header className="p-4 border-b">
-          <p className="text-sm font-semibold">{t.app.name}</p>
-          <p className="text-xs text-muted-foreground">{t.app.tagline}</p>
-        </header>
-
         <div className="p-3">
           <Button asChild className="w-full" size="sm">
             <Link href="/conversations/new">
@@ -82,12 +77,22 @@ export default async function AppLayout({
               </Link>
             </Button>
           )}
-          <form action={doLogout}>
-            <Button type="submit" variant="ghost" size="sm" className="w-full justify-start">
-              <LogOut className="h-4 w-4" /> {t.auth.logout}
-            </Button>
-          </form>
-          <p className="text-xs text-muted-foreground px-2 pt-1">{user.email}</p>
+          <div className="flex items-center gap-2 justify-between min-w-0 px-2 pt-1">
+            <p className="text-xs text-muted-foreground truncate min-w-0">
+              {user.email}
+            </p>
+            <form action={doLogout} className="shrink-0">
+              <Button
+                type="submit"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                aria-label={t.auth.logout}
+              >
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </form>
+          </div>
         </footer>
       </aside>
 

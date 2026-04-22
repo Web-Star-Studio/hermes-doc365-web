@@ -1,0 +1,21 @@
+# Install deps inside the image from pnpm-lock.yaml instead of copying host
+# node_modules (would balloon the build context to hundreds of MB and clobber
+# the layer that `pnpm install --frozen-lockfile` produced in the deps stage).
+node_modules
+.next
+.turbo
+
+# VCS and editor noise
+.git
+.gitignore
+.vscode
+.idea
+
+# Local-only env files — never bake secrets into the image
+.env
+.env.*
+!.env.example
+
+# Build/test artifacts
+coverage
+*.log

@@ -4,10 +4,18 @@
  * NOTE: Auth.js v5 middleware is lightweight — it only inspects the session
  * JWT cookie. It does NOT hit the DB. DB-backed checks live in the route
  * handlers / server components themselves.
+ *
+ * Imports `auth.config.ts` (Edge-safe) rather than `auth.ts` (which pulls in
+ * bcryptjs/pg/drizzle and breaks the Edge runtime with
+ * "The edge runtime does not support Node.js 'crypto' module").
  */
 
-import { auth } from "@/lib/auth";
+import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
+
+import { authConfig } from "@/lib/auth.config";
+
+const { auth } = NextAuth(authConfig);
 
 export default auth((req) => {
   const { pathname } = req.nextUrl;

@@ -1,0 +1,48 @@
+# Dev image for the FastAPI adapter.
+# Editable install (`uv pip install -e`) + `uvicorn --reload` so synced source
+# edits reflect in site-packages and the server reloads automatically. Used by
+# infra/docker-compose.dev.yml together with Docker Compose watch.
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl \
+      git \
+      build-essential \
+      libffi-dev \
+      libssl-dev \
+      ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir "uv>=0.5.0"
+
+# README.md is referenced by pyproject.toml's `readme = "README.md"` and is
+# required by hatchling during metadata validation, so it must be present.
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+# Editable install so files synced into /app/src show up in site-packages
+# without rebuilding. Dev extras (pytest, ruff) are included so they're
+# available via `docker compose exec adapter ...`.
+RUN uv pip install --system --no-cache -e ".[dev]"
+
+RUN mkdir -p /hermes-data
+ENV HERMES_HOME=/hermes-data
+
+EXPOSE 8000
+
+# --reload-dir is pinned to /app/src so uvicorn's file watcher only scans the
+# adapter's own code, not the /hermes-data volume or anything else under /app.
+CMD ["uvicorn", "adapter.main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--proxy-headers", \
+     "--reload", \
+     "--reload-dir", "/app/src"]

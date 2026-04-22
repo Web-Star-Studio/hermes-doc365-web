@@ -2,7 +2,6 @@ import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/lib/auth";
 import { getConversation, listFiles, listMessages } from "@/lib/repos";
-import { t } from "@/lib/i18n/pt-BR";
 import { ConversationView } from "./conversation-view";
 
 export default async function ConversationPage({
@@ -24,7 +23,7 @@ export default async function ConversationPage({
     <ConversationView
       conversation={{
         id: convo.id,
-        title: convo.title ?? t.conversations.untitled,
+        title: convo.title,
       }}
       initialMessages={msgs.map((m) => ({
         id: m.id,

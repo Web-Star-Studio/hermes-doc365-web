@@ -1,12 +1,17 @@
 /**
- * Auth.js v5 configuration.
+ * Auth.js v5 full configuration (Node runtime only).
+ *
+ * This module pulls in bcryptjs + pg + drizzle, which are NOT available in
+ * the Edge runtime. `middleware.ts` MUST import `auth.config.ts` instead —
+ * not this file — or it will fail with "The edge runtime does not support
+ * Node.js 'crypto' module".
  *
  * Credentials provider only for MVP (email + password, bcrypt hashes).
  * Session strategy: JWT (default for credentials). No external OAuth
  * providers — portability mandate from PRD §23.2.
  */
 
-import NextAuth, { type DefaultSession } from "next-auth";
+import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { eq } from "drizzle-orm";
@@ -15,31 +20,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { organizations, users } from "@/db/schema";
 
-declare module "next-auth" {
-  interface Session {
-    user: {
-      id: string;
-      organizationId: string;
-      role: "user" | "operator";
-      name: string;
-      email: string;
-    } & DefaultSession["user"];
-  }
-
-  interface User {
-    id: string;
-    organizationId: string;
-    role: "user" | "operator";
-  }
-}
-
-declare module "next-auth/jwt" {
-  interface JWT {
-    id: string;
-    organizationId: string;
-    role: "user" | "operator";
-  }
-}
+import { authConfig } from "./auth.config";
 
 const credentialsSchema = z.object({
   email: z.string().email().toLowerCase(),
@@ -47,9 +28,7 @@ const credentialsSchema = z.object({
 });
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  session: { strategy: "jwt", maxAge: 60 * 60 * 8 }, // 8h sessions
-  pages: { signIn: "/login" },
-  trustHost: true,
+  ...authConfig,
   providers: [
     Credentials({
       name: "credentials",
@@ -97,24 +76,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       },
     }),
   ],
-  callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
-        token.id = user.id;
-        token.organizationId = user.organizationId;
-        token.role = user.role;
-      }
-      return token;
-    },
-    async session({ session, token }) {
-      if (token?.id) {
-        session.user.id = token.id as string;
-        session.user.organizationId = token.organizationId as string;
-        session.user.role = token.role as "user" | "operator";
-      }
-      return session;
-    },
-  },
 });
 
 /** Convenience type for route handlers. */

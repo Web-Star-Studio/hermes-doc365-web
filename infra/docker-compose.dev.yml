@@ -1,0 +1,89 @@
+# Doc365 Hermes Portal — dev overlay with Docker Compose watch support.
+#
+# Swaps `web` and `adapter` for hot-reload dev images and declares
+# `develop.watch` rules so file edits on the host propagate into the
+# containers without a full rebuild.
+#
+# Usage (from repo root):
+#
+#   docker compose \
+#     -f infra/docker-compose.yml \
+#     -f infra/docker-compose.dev.yml \
+#     --env-file .env \
+#     up --watch --build
+#
+# Requires Docker Compose v2.22+ (Docker Desktop 4.24+).
+#
+# Watch actions used:
+#   sync          — copy changed files into the container (HMR picks them up)
+#   sync+restart  — copy, then restart the container (for config files the
+#                   dev server reads only at startup)
+#   rebuild       — rebuild the image (for dependency or Dockerfile changes)
+
+name: doc365-hermes
+
+services:
+  adapter:
+    build:
+      context: ../adapter
+      dockerfile: Dockerfile.dev
+    environment:
+      # Verbose logs are handy while iterating; override in .env if noisy.
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    develop:
+      watch:
+        # Source edits → synced in; uvicorn --reload restarts the app.
+        - action: sync
+          path: ../adapter/src
+          target: /app/src
+        # Dep or packaging changes → full rebuild (editable install metadata).
+        - action: rebuild
+          path: ../adapter/pyproject.toml
+        - action: rebuild
+          path: ../adapter/Dockerfile.dev
+
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile.dev
+    environment:
+      NODE_ENV: development
+      NEXT_TELEMETRY_DISABLED: "1"
+    develop:
+      watch:
+        # App code + assets → synced in; Next.js HMR picks them up.
+        - action: sync
+          path: ../web/src
+          target: /app/src
+        - action: sync
+          path: ../web/public
+          target: /app/public
+        # Config files are read once at dev-server start → sync then restart.
+        - action: sync+restart
+          path: ../web/next.config.ts
+          target: /app/next.config.ts
+        - action: sync+restart
+          path: ../web/tailwind.config.ts
+          target: /app/tailwind.config.ts
+        - action: sync+restart
+          path: ../web/postcss.config.mjs
+          target: /app/postcss.config.mjs
+        - action: sync+restart
+          path: ../web/tsconfig.json
+          target: /app/tsconfig.json
+        # Dep or Dockerfile changes → full rebuild.
+        - action: rebuild
+          path: ../web/package.json
+        - action: rebuild
+          path: ../web/pnpm-lock.yaml
+        - action: rebuild
+          path: ../web/Dockerfile.dev
+
+  caddy:
+    develop:
+      watch:
+        # Caddy reloads on config change automatically when the file is
+        # replaced in-place; sync+restart guarantees a clean reload.
+        - action: sync+restart
+          path: ./Caddyfile
+          target: /etc/caddy/Caddyfile
