@@ -1,0 +1,24 @@
+# Doc365 Hermes Portal — Caddy reverse proxy
+# Fronts Next.js (web:3000) and optionally exposes adapter for diagnostics.
+# SSE streaming is preserved: Caddy does not buffer by default.
+
+:80 {
+	encode gzip
+
+	# Liveness probe
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	# Everything else goes to Next.js
+	reverse_proxy web:3000 {
+		# Streaming support (SSE). Preserve long-lived connections.
+		flush_interval -1
+		transport http {
+			read_buffer 4096
+			write_buffer 4096
+			response_header_timeout 0s
+			dial_timeout 10s
+		}
+	}
+}
