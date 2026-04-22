@@ -11,7 +11,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
-    "seed:user": "tsx ../scripts/seed-user.ts"
+    "seed:user": "tsx ../scripts/seed-user.ts",
+    "smoke": "tsx ../scripts/smoke.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.645.0",

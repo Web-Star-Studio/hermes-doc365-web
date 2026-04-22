@@ -78,7 +78,22 @@ DATABASE_URL="postgres://doc365:doc365dev@localhost:5432/doc365" \
 step "Starting adapter + web + caddy"
 docker compose -f infra/docker-compose.yml --env-file .env up -d --build adapter web caddy
 
-# ── 7. Outro ───────────────────────────────────────────────────────────
+# ── 7. Post-boot smoke ─────────────────────────────────────────────────
+step "Waiting ~15s for adapter + web to warm up"
+for i in $(seq 1 30); do
+  if curl -sf http://localhost:8000/healthz >/dev/null && \
+     curl -sf http://localhost:3000/api/health >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+if pnpm --silent -C web smoke; then
+  step "Smoke test passed"
+else
+  warn "Smoke test failed — check 'docker compose logs'"
+fi
+
+# ── 8. Outro ───────────────────────────────────────────────────────────
 cat <<'EOF'
 
 ───────────────────────────────────────────────
