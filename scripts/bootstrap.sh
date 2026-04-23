@@ -71,7 +71,10 @@ step "Applying migrations"
 pushd web >/dev/null
 if [ ! -d node_modules ]; then
   step "Installing web/ deps (first time)"
-  pnpm install --frozen-lockfile || pnpm install
+  # --prod=false forces devDependencies even if the shell has
+  # NODE_ENV=production (common on VPS hosts); we need tsx + drizzle-kit
+  # for the migrator and seeder to run from the host.
+  pnpm install --frozen-lockfile --prod=false || pnpm install --prod=false
 fi
 # Host-mapped port; migrator runs outside the compose network.
 HOST_DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}"

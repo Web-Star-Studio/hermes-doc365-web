@@ -19,6 +19,9 @@ WORKDIR /app
 RUN npm install -g pnpm@10
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# Guarantee /app/public exists even if the source tree didn't ship one
+# (git doesn't track empty directories, so fresh clones may lack it).
+RUN mkdir -p ./public
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm run build
 
