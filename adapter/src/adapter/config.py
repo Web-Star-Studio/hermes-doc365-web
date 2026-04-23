@@ -6,6 +6,19 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _split_csv(raw: str) -> list[str] | None:
+    """Split a comma-separated env var into a list, returning None if empty.
+
+    Returning None lets us pass "don't override" to `AIAgent` instead of an
+    empty list, which Hermes treats as "disable everything".
+    """
+    if not raw:
+        return None
+    items = [piece.strip() for piece in raw.split(",")]
+    items = [piece for piece in items if piece]
+    return items or None
+
+
 class Settings(BaseSettings):
     """Environment-driven settings. See infra/.env.example."""
 
@@ -27,6 +40,25 @@ class Settings(BaseSettings):
     hermes_api_key: str = Field(default="", alias="HERMES_API_KEY")
     hermes_model: str = Field(default="gpt-4o-mini", alias="HERMES_MODEL")
     hermes_home: str = Field(default="/hermes-data", alias="HERMES_HOME")
+    hermes_base_url: str = Field(default="", alias="HERMES_BASE_URL")
+    hermes_api_mode: str = Field(default="", alias="HERMES_API_MODE")
+    hermes_max_iterations: int = Field(default=40, alias="HERMES_MAX_ITERATIONS")
+    hermes_enabled_toolsets_raw: str = Field(
+        default="file,browser,terminal,web,vision,memory,session_search,skills,todo,code_execution",
+        alias="HERMES_ENABLED_TOOLSETS",
+    )
+    hermes_disabled_toolsets_raw: str = Field(
+        default="clarify,messaging,tts,cronjob",
+        alias="HERMES_DISABLED_TOOLSETS",
+    )
+
+    @property
+    def hermes_enabled_toolsets(self) -> list[str] | None:
+        return _split_csv(self.hermes_enabled_toolsets_raw)
+
+    @property
+    def hermes_disabled_toolsets(self) -> list[str] | None:
+        return _split_csv(self.hermes_disabled_toolsets_raw)
 
     # ── Feature flags ─────────────────────────────────────────────────
     orizon_submit_enabled: bool = Field(default=False, alias="ORIZON_SUBMIT_ENABLED")

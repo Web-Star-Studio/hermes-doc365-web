@@ -1,26 +1,24 @@
 """Runs Hermes' `AIAgent` safely from async FastAPI handlers.
 
-Design notes (from plan / `acp_adapter/server.py` reference):
+Design notes (see `hermes-portal-integration-guide.md` §7):
 - `AIAgent` is synchronous and NOT thread-safe across instances.
 - One fresh instance per request. Wrap the sync call in a bounded ThreadPool
   (max_workers=4 is plenty for MVP; bump later if load justifies it).
-- No in-memory session caching. `conversation_history` always arrives in the
-  envelope from Postgres.
+- The portal DB (Postgres) is the authoritative source of truth for
+  conversations, files, and approvals. Hermes runs stateless per turn:
+  `persist_session=False`, `session_id=conversation_id` (used only for logging),
+  and history is re-sent in each envelope.
+- Construct `AIAgent` with explicit kwargs — no reliance on implicit defaults.
 - Import `AIAgent` lazily so that unit tests and `--help` invocations do not
   require Hermes to be installed.
-
-Phase 2 addition: a streaming variant emits progress dicts through an asyncio
-queue so `main.py` can fan them out over SSE while the sync Hermes call keeps
-running inside the threadpool.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,11 +28,13 @@ from .files import MaterializedFile
 
 logger = logging.getLogger(__name__)
 
-# Shared executor; capped to avoid runaway LLM fan-out under load.
 _EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="hermes")
 
-# Sentinel used to signal "done" across the sync/async boundary.
-_DONE = object()
+_HERMES_MISSING_MESSAGE = (
+    "O Hermes não está configurado neste ambiente (módulo "
+    "`hermes-agent` ausente). Instale `hermes-agent` e configure "
+    "HERMES_API_KEY para habilitar respostas reais."
+)
 
 
 @dataclass
@@ -53,7 +53,7 @@ class ProgressEvent:
     data: dict[str, Any] = field(default_factory=dict)
 
 
-# ── Prompt helpers ──────────────────────────────────────────────────────
+# ── Prompt / history helpers ────────────────────────────────────────────
 
 
 def _build_system_prompt(req: ChatRequest, files: list[MaterializedFile]) -> str:
@@ -95,9 +95,102 @@ def _history_to_hermes(history: list[Any]) -> list[dict[str, str]]:
     (Chat Completions style with `role` / `content`).
     """
     role_map = {"user": "user", "assistant": "assistant", "system": "system"}
-    return [
-        {"role": role_map.get(h.sender, "user"), "content": h.content} for h in history
-    ]
+    return [{"role": role_map.get(h.sender, "user"), "content": h.content} for h in history]
+
+
+def _normalize_reply(reply: Any) -> str:
+    """Flatten whatever `AIAgent.run_conversation`/`chat` returns into a string.
+
+    `run_conversation` returns a dict like:
+        {"final_response": str | None, "messages": [...], "api_calls": int,
+         "completed": bool, "failed"?: bool, "error"?: str,
+         "interrupted"?: bool, "partial"?: bool}
+    `chat` returns the `final_response` string directly.
+
+    If the run failed or was interrupted and `final_response` is empty, surface
+    the `error` field so the caller sees something actionable instead of "".
+    """
+    if isinstance(reply, dict):
+        final = reply.get("final_response")
+        if final:
+            return str(final)
+        # Back-compat with older/alt shapes.
+        alt = reply.get("content") or reply.get("message")
+        if alt:
+            return str(alt)
+        err = reply.get("error")
+        if err:
+            return f"Falha ao executar o Hermes: {err}"
+        return ""
+    return str(reply) if reply is not None else ""
+
+
+# ── Agent construction ──────────────────────────────────────────────────
+
+
+def _build_agent(
+    req: ChatRequest,
+    settings: Settings,
+    files: list[MaterializedFile],
+    *,
+    step_cb: Callable | None = None,
+    tool_progress_cb: Callable | None = None,
+):
+    """Instantiate `AIAgent` with explicit, deterministic configuration.
+
+    Raises ImportError with a pt-BR message if the `hermes-agent` package is
+    not installed — the caller converts this into a friendly chat reply.
+    """
+    try:
+        from run_agent import AIAgent  # type: ignore[import-not-found]
+    except Exception as e:  # pragma: no cover — depends on env
+        logger.error("hermes-agent not importable: %s", e)
+        raise ImportError(_HERMES_MISSING_MESSAGE) from e
+
+    return AIAgent(
+        provider=settings.hermes_model_provider or None,
+        api_key=settings.hermes_api_key or None,
+        model=settings.hermes_model,
+        base_url=settings.hermes_base_url or None,
+        api_mode=settings.hermes_api_mode or None,
+        max_iterations=settings.hermes_max_iterations,
+        enabled_toolsets=settings.hermes_enabled_toolsets,
+        disabled_toolsets=settings.hermes_disabled_toolsets,
+        quiet_mode=True,
+        verbose_logging=False,
+        save_trajectories=False,
+        ephemeral_system_prompt=_build_system_prompt(req, files),
+        session_id=req.conversation_id,
+        platform="api_server",
+        persist_session=False,
+        # skip_context_files + skip_memory = True: the embedded/FastAPI pattern
+        # per Hermes' python-library guide. The portal is multi-clinic; we never
+        # want SOUL.md / AGENTS.md / Hermes' global memory leaking across
+        # tenants. The portal DB is the sole source of conversation context.
+        skip_context_files=True,
+        skip_memory=True,
+        step_callback=step_cb,
+        tool_progress_callback=tool_progress_cb,
+    )
+
+
+def _invoke_agent(
+    agent: Any,
+    user_text: str,
+    history: list[dict[str, str]],
+    system_prompt: str,
+) -> Any:
+    """Run one turn. Prefer `run_conversation` (exercises progress callbacks);
+    fall back to `chat` for older AIAgent surfaces.
+    """
+    run_conv = getattr(agent, "run_conversation", None)
+    if callable(run_conv):
+        return run_conv(
+            user_message=user_text,
+            conversation_history=history,
+            system_message=system_prompt,
+        )
+    return agent.chat(user_text)
 
 
 # ── Non-streaming path (Phase 1 retained for tests / diagnostics) ───────
@@ -108,39 +201,14 @@ def _run_chat_sync(
 ) -> RunResult:
     """Blocking path that instantiates `AIAgent` and returns its reply."""
     try:
-        from run_agent import AIAgent  # type: ignore[import-not-found]
-    except Exception as e:  # pragma: no cover — depends on env
-        logger.error("hermes-agent not importable: %s", e)
-        return RunResult(
-            assistant_message=(
-                "O Hermes não está configurado neste ambiente (módulo "
-                "`hermes-agent` ausente). Instale `hermes-agent[web]` e "
-                "configure HERMES_API_KEY para habilitar respostas reais."
-            )
-        )
+        agent = _build_agent(req, settings, files)
+    except ImportError as e:
+        return RunResult(assistant_message=str(e))
 
-    agent = AIAgent()
-
-    with suppress(Exception):
-        agent.conversation_history = _history_to_hermes(req.history)  # type: ignore[attr-defined]
-    with suppress(Exception):
-        agent.ephemeral_system_prompt = _build_system_prompt(req, files)  # type: ignore[attr-defined]
-
-    user_text = req.user_message or ""
-    reply: Any
-    try:
-        reply = agent.chat(user_text)  # type: ignore[attr-defined]
-    except AttributeError:
-        reply = agent.run_conversation(  # type: ignore[attr-defined]
-            user_message=user_text,
-            conversation_history=_history_to_hermes(req.history),
-            system_message=_build_system_prompt(req, files),
-        )
-
-    if isinstance(reply, dict):
-        reply = reply.get("content") or reply.get("message") or str(reply)
-
-    return RunResult(assistant_message=str(reply))
+    system_prompt = _build_system_prompt(req, files)
+    history = _history_to_hermes(req.history)
+    reply = _invoke_agent(agent, req.user_message or "", history, system_prompt)
+    return RunResult(assistant_message=_normalize_reply(reply))
 
 
 async def run_chat(
@@ -150,12 +218,70 @@ async def run_chat(
 ) -> RunResult:
     """Async wrapper — schedules the sync call in the shared executor."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        _EXECUTOR, _run_chat_sync, req, settings, files
-    )
+    return await loop.run_in_executor(_EXECUTOR, _run_chat_sync, req, settings, files)
 
 
 # ── Streaming path ──────────────────────────────────────────────────────
+
+
+def _make_tool_progress_cb(emit: Callable[[str, dict[str, Any]], None]) -> Callable:
+    """Build a `tool_progress_callback` that tolerates both call shapes.
+
+    Hermes invokes this positionally inside `run_agent.py` with
+    `(event_type, tool_name, args_preview, args, **kwargs)` (see ~line 7452).
+    The adapter's earlier draft declared keyword-only parameters, which would
+    raise TypeError on real calls. We accept *args/**kwargs and normalize into
+    the `{tool, status, text, metadata}` dict that main.py/SSE expects.
+    """
+
+    def cb(*args: Any, **kwargs: Any) -> None:
+        # kwargs-shape (our own tests, or future Hermes versions):
+        #   cb(tool_name, status=..., text=..., metadata=...)
+        if args and kwargs and "status" in kwargs:
+            tool_name = args[0]
+            data: dict[str, Any] = {
+                "tool": str(tool_name),
+                "status": str(kwargs.get("status", "running")),
+            }
+            if kwargs.get("text") is not None:
+                data["text"] = str(kwargs["text"])
+            if kwargs.get("metadata") is not None:
+                data["metadata"] = kwargs["metadata"]
+            emit("tool_progress", data)
+            return
+
+        # Positional-shape (current Hermes internal call):
+        #   cb(event_type, tool_name, args_preview, args, duration=..., is_error=...)
+        if not args:
+            return
+        event_type = str(args[0]) if len(args) > 0 else ""
+        tool_name = str(args[1]) if len(args) > 1 else ""
+        preview = args[2] if len(args) > 2 else None
+        tool_args = args[3] if len(args) > 3 else None
+
+        status = "running"
+        if event_type.endswith(".completed") or kwargs.get("is_error") is False:
+            status = "completed"
+        elif event_type.endswith(".error") or kwargs.get("is_error") is True:
+            status = "error"
+        elif event_type.endswith(".started"):
+            status = "running"
+
+        data = {"tool": tool_name, "status": status}
+        if preview is not None:
+            data["text"] = str(preview)
+        metadata: dict[str, Any] = {}
+        if tool_args is not None:
+            metadata["args"] = tool_args
+        if "duration" in kwargs:
+            metadata["duration"] = kwargs["duration"]
+        if event_type:
+            metadata["event"] = event_type
+        if metadata:
+            data["metadata"] = metadata
+        emit("tool_progress", data)
+
+    return cb
 
 
 def _run_chat_streaming_sync(
@@ -176,82 +302,46 @@ def _run_chat_streaming_sync(
 
     emit("step", {"description": "Preparando contexto da conversa."})
 
-    try:
-        from run_agent import AIAgent  # type: ignore[import-not-found]
-    except Exception as e:  # pragma: no cover — depends on env
-        logger.error("hermes-agent not importable: %s", e)
-        fallback = (
-            "O Hermes não está configurado neste ambiente (módulo "
-            "`hermes-agent` ausente). Instale `hermes-agent[web]` e "
-            "configure HERMES_API_KEY para habilitar respostas reais."
+    step_counter = {"n": 0}
+
+    def step_cb(*args: Any, **kwargs: Any) -> None:
+        step_counter["n"] += 1
+        # Hermes calls step_callback(api_call_count, prev_tools). We just relay
+        # a monotonic step index + a short human description.
+        description = (
+            f"API call {args[0]}" if args and isinstance(args[0], int) else "Executando Hermes"
         )
+        emit("step", {"description": description, "step_index": step_counter["n"]})
+
+    tool_progress_cb = _make_tool_progress_cb(emit)
+
+    try:
+        agent = _build_agent(
+            req,
+            settings,
+            files,
+            step_cb=step_cb,
+            tool_progress_cb=tool_progress_cb,
+        )
+    except ImportError as e:
+        fallback = str(e)
         emit("message", {"content": fallback, "final": True})
         return RunResult(assistant_message=fallback)
 
-    # ── Progress callbacks mirror `acp_adapter/events.py` shape ─────────
-    step_counter = {"n": 0}
-
-    def step_cb(description: str) -> None:
-        step_counter["n"] += 1
-        emit(
-            "step",
-            {"description": str(description), "step_index": step_counter["n"]},
-        )
-
-    def tool_progress_cb(
-        tool_name: str,
-        *,
-        status: str = "running",
-        text: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        data: dict[str, Any] = {"tool": str(tool_name), "status": status}
-        if text is not None:
-            data["text"] = str(text)
-        if metadata is not None:
-            data["metadata"] = metadata
-        emit("tool_progress", data)
-
-    agent = AIAgent()
-    with suppress(Exception):
-        agent.conversation_history = _history_to_hermes(req.history)  # type: ignore[attr-defined]
-    with suppress(Exception):
-        agent.ephemeral_system_prompt = _build_system_prompt(req, files)  # type: ignore[attr-defined]
-
-    # Best-effort wiring of progress hooks — different AIAgent versions expose
-    # slightly different names. We try a few and silently move on if none match;
-    # in that case the client still gets the opening/closing step events we emit.
-    for attr in ("step_callback", "on_step", "progress_callback"):
-        with suppress(Exception):
-            setattr(agent, attr, step_cb)
-    for attr in ("tool_progress_callback", "on_tool_progress"):
-        with suppress(Exception):
-            setattr(agent, attr, tool_progress_cb)
-
-    user_text = req.user_message or ""
     emit("step", {"description": "Consultando o modelo Hermes."})
 
-    reply: Any
+    system_prompt = _build_system_prompt(req, files)
+    history = _history_to_hermes(req.history)
+
     try:
-        # Prefer run_conversation so progress callbacks get exercised.
-        reply = agent.run_conversation(  # type: ignore[attr-defined]
-            user_message=user_text,
-            conversation_history=_history_to_hermes(req.history),
-            system_message=_build_system_prompt(req, files),
-        )
-    except AttributeError:
-        reply = agent.chat(user_text)  # type: ignore[attr-defined]
+        reply = _invoke_agent(agent, req.user_message or "", history, system_prompt)
     except Exception as e:
         logger.exception("Hermes run failed")
         emit("error", {"code": "hermes_error", "message": str(e)})
         raise
 
-    if isinstance(reply, dict):
-        reply = reply.get("content") or reply.get("message") or str(reply)
-    assistant_message = str(reply)
-
+    assistant_message = _normalize_reply(reply)
     emit("message", {"content": assistant_message, "final": True})
-
     return RunResult(assistant_message=assistant_message)
 
 
@@ -277,17 +367,13 @@ async def stream_chat(
         queue,
     )
 
-    # Relay queue → caller until the future resolves AND the queue is drained.
     while True:
-        # Opportunistic drain before awaiting more: keeps latency low when
-        # Hermes emits a burst of callbacks while we're blocked on queue.get().
         drained = 0
         while not queue.empty() and drained < 16:
             yield queue.get_nowait()
             drained += 1
 
         if future.done():
-            # Drain remaining events then exit loop.
             while not queue.empty():
                 yield queue.get_nowait()
             break
@@ -298,6 +384,5 @@ async def stream_chat(
         except TimeoutError:
             continue
 
-    # Surface any exception the sync body raised.
     result = await future
     yield result
