@@ -1,4 +1,4 @@
-# Doc365 Hermes adapter — Python 3.11 + FastAPI + hermes-agent
+# Doc365 Hermes adapter — Python 3.11 + FastAPI + hermes-agent + Playwright
 FROM python:3.11-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Hermes runtime deps that its toolset often expects at runtime. Kept minimal.
+# Hermes + Playwright runtime deps.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       curl \
       git \
@@ -14,7 +14,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libffi-dev \
       libssl-dev \
       ca-certificates \
+      # Playwright Chromium dependencies
+      libnss3 \
+      libatk1.0-0 \
+      libatk-bridge2.0-0 \
+      libcups2 \
+      libdrm2 \
+      libxkbcommon0 \
+      libxcomposite1 \
+      libxdamage1 \
+      libxrandr2 \
+      libgbm1 \
+      libpango-1.0-0 \
+      libcairo2 \
+      libasound2 \
+      libxshmfence1 \
  && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20 LTS + playwright-cli
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g playwright-cli \
+ && npx playwright install chromium \
+ && npx playwright install-deps chromium 2>/dev/null || true
 
 WORKDIR /app
 

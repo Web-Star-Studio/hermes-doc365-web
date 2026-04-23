@@ -56,10 +56,43 @@ class ProgressEvent:
 # ── Prompt / history helpers ────────────────────────────────────────────
 
 
-def _build_system_prompt(req: ChatRequest, files: list[MaterializedFile]) -> str:
-    """Portuguese system wrap per PRD §17.2 — non-technical user, billing domain,
-    uncertainty labelling, file-aware, approval-aware.
+def _build_system_prompt(req: ChatRequest, files: list[MaterializedFile], settings: Settings | None = None) -> str:
+    """Build the full persona-enriched system prompt.
+
+    Uses the persona module to inject domain knowledge, memory, Orizon automation
+    patterns, and Playwright/browserbase context — making this adapter's Hermes
+    a true clone of the operator's primary agent.
+
+    Falls back to minimal prompt if settings.hermes_persona_enabled is False.
     """
+    # Build files context block
+    files_block = ""
+    if files:
+        lines = [
+            "Arquivos disponíveis para análise (caminhos locais — use as ferramentas apropriadas para ler):"
+        ]
+        for f in files:
+            lines.append(
+                f"- {f.original_name} ({f.mime_type}, {f.size_bytes} bytes) → {f.local_path}"
+            )
+        files_block = "\n".join(lines)
+
+    # Check if persona is enabled (default True if settings not provided)
+    if settings is not None and not settings.hermes_persona_enabled:
+        # Minimal prompt (original behavior)
+        return _build_minimal_prompt(req, files_block)
+
+    from .persona import build_persona_system_prompt
+
+    return build_persona_system_prompt(
+        files_context=files_block,
+        action_origin=req.action_origin,
+        approval_state=req.approval_state,
+    )
+
+
+def _build_minimal_prompt(req: ChatRequest, files_block: str) -> str:
+    """Minimal system prompt (original behavior, no domain knowledge injection)."""
     lines = [
         "Você é o Hermes, assistente operacional do Doc365 para faturamento médico no Brasil.",
         "O usuário é um médico ou colaborador de clínica, normalmente não-técnico.",
@@ -79,14 +112,8 @@ def _build_system_prompt(req: ChatRequest, files: list[MaterializedFile]) -> str
         lines.append(
             "Aprovação ainda pendente: NÃO execute ações de efeito externo; apenas prepare e explique o que será feito."
         )
-    if files:
-        lines.append(
-            "Arquivos disponíveis para análise (caminhos locais — use as ferramentas apropriadas para ler):"
-        )
-        for f in files:
-            lines.append(
-                f"- {f.original_name} ({f.mime_type}, {f.size_bytes} bytes) → {f.local_path}"
-            )
+    if files_block:
+        lines.append(files_block)
     return "\n".join(lines)
 
 
@@ -159,7 +186,7 @@ def _build_agent(
         quiet_mode=True,
         verbose_logging=False,
         save_trajectories=False,
-        ephemeral_system_prompt=_build_system_prompt(req, files),
+        ephemeral_system_prompt=_build_system_prompt(req, files, settings),
         session_id=req.conversation_id,
         platform="api_server",
         persist_session=False,
@@ -205,7 +232,7 @@ def _run_chat_sync(
     except ImportError as e:
         return RunResult(assistant_message=str(e))
 
-    system_prompt = _build_system_prompt(req, files)
+    system_prompt = _build_system_prompt(req, files, settings)
     history = _history_to_hermes(req.history)
     reply = _invoke_agent(agent, req.user_message or "", history, system_prompt)
     return RunResult(assistant_message=_normalize_reply(reply))
@@ -330,7 +357,7 @@ def _run_chat_streaming_sync(
 
     emit("step", {"description": "Consultando o modelo Hermes."})
 
-    system_prompt = _build_system_prompt(req, files)
+    system_prompt = _build_system_prompt(req, files, settings)
     history = _history_to_hermes(req.history)
 
     try:
