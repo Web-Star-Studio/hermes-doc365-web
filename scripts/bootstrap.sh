@@ -38,6 +38,14 @@ else
   step "Reusing existing .env"
 fi
 
+# Export every var in .env so every subsequent `docker compose` call can
+# interpolate ${VAR} references without needing --env-file, and so the
+# migrator/seeder below read the real credentials the user set.
+set -a
+# shellcheck disable=SC1091
+. ./.env
+set +a
+
 # ── 2. Compose up ──────────────────────────────────────────────────────
 command -v docker >/dev/null 2>&1 || die "docker not found on PATH"
 command -v docker compose >/dev/null 2>&1 || true
@@ -66,13 +74,13 @@ if [ ! -d node_modules ]; then
   pnpm install --frozen-lockfile || pnpm install
 fi
 # Host-mapped port; migrator runs outside the compose network.
-DATABASE_URL="postgres://doc365:doc365dev@localhost:5432/doc365" pnpm db:migrate
+HOST_DATABASE_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}"
+DATABASE_URL="$HOST_DATABASE_URL" pnpm db:migrate
 popd >/dev/null
 
 # ── 5. Seed user ───────────────────────────────────────────────────────
 step "Seeding dev user"
-DATABASE_URL="postgres://doc365:doc365dev@localhost:5432/doc365" \
-  pnpm -C web seed:user
+DATABASE_URL="$HOST_DATABASE_URL" pnpm -C web seed:user
 
 # ── 6. Bring up adapter + web + caddy ──────────────────────────────────
 step "Starting adapter + web + caddy"
