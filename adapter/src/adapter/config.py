@@ -51,6 +51,12 @@ class Settings(BaseSettings):
         default="clarify,messaging,tts,cronjob",
         alias="HERMES_DISABLED_TOOLSETS",
     )
+    hermes_persona_enabled: bool = Field(
+        default=True,
+        alias="HERMES_PERSONA_ENABLED",
+        description="Enable the full persona (domain knowledge, memory, Orizon patterns). "
+                    "Set to false to revert to the minimal system prompt.",
+    )
 
     @property
     def hermes_enabled_toolsets(self) -> list[str] | None:

@@ -2,7 +2,7 @@
 # Fronts Next.js (web:3000) and optionally exposes adapter for diagnostics.
 # SSE streaming is preserved: Caddy does not buffer by default.
 
-:80 {
+hermes.doc365.com.br {
 	encode gzip
 
 	# Liveness probe
